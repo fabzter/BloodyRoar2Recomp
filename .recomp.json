@@ -1,0 +1,39 @@
+{
+  "$schema": "https://recomp.fyi/schema/v1.json",
+  "game": "Bloody Roar II",
+  "wikidata": "Q2201095",
+  "system": "PS1",
+  "type": "recomp",
+  "original": [
+    {
+      "region": "Europe",
+      "serial": "SLES-01722",
+      "sha1": "c6021ee7817cdd3dba3e2cf8238054a7943aa5be"
+    },
+    {
+      "region": "USA",
+      "serial": "SCUS-94424",
+      "sha1": "75a13364ae026fe555e9c666c7c3434e5b403cc8"
+    },
+    {
+      "region": "Japan",
+      "serial": "SLPS-01842",
+      "sha1": "2274696c309bdf9b4770d853489d4ecfdbaa59d0"
+    }
+  ],
+  "project": "Bloody Roar II Recompiled",
+  "status": "released",
+  "targets": ["Windows", "Linux"],
+  "toolchain": ["psxrecomp", "recomp-ui"],
+  "approach": "Static recompilation of the game's MIPS code to C, built into one universal executable that runs the region you mount.",
+  "maintainers": [
+    { "name": "novapowers0", "link": "https://github.com/novapowers0" }
+  ],
+  "links": [
+    { "label": "Releases", "url": "https://github.com/novapowers0/BloodyRoar2Recomp/releases" }
+  ],
+  "help": [
+    "Graphical boot/playthrough testing of the Japan/Asia (SLPS-01842) build"
+  ],
+  "notes": "Europe (SLES-01722) and USA (SCUS-94424) are supported; Japan/Asia (SLPS-01842) is included in the universal executable but still experimental. Windows builds use OpenGL by default, Linux also ships Vulkan."
+}

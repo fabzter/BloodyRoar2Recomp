@@ -77,6 +77,7 @@ starvation_dump.jsonl
 !/catalog_identity_japan.json
 !/disc_probe.json
 !/disc_probe_us.json
+!/.recomp.json
 
 # Local build toolchain / vendored deps (never commit)
 /toolchain/
