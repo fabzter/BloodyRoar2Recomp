@@ -36,14 +36,17 @@ BUILD_DIR="${BR2_BUILD_DIR:-build-macos}"
 EMITTER_BUILD="build-recompiler"
 JOBS="$(sysctl -n hw.ncpu 2>/dev/null || echo 8)"
 
-PULL=0; FULL=0; REGEN_BIOS=0; CLEAN=0
+PULL=0; FULL=0; REGEN_BIOS=0; CLEAN=0; VENDOR=1; PORTABLE=0; OFFLINE=0
 for arg in "$@"; do
   case "$arg" in
     --pull) PULL=1 ;;
     --full) FULL=1 ;;
     --regen-bios) REGEN_BIOS=1 ;;
     --clean) CLEAN=1 ;;
-    *) echo "unknown flag: $arg (use --pull|--full|--regen-bios|--clean)" >&2; exit 2 ;;
+    --system-deps) VENDOR=0 ;;   # prefer Homebrew SDL3 over the pinned fetch
+    --portable) PORTABLE=1 ;;    # brew-free binary: no freetype/harfbuzz either
+    --offline) OFFLINE=1 ;;      # never download (vendored third_party archives)
+    *) echo "unknown flag: $arg (use --pull|--full|--regen-bios|--clean|--system-deps|--portable|--offline)" >&2; exit 2 ;;
   esac
 done
 
@@ -99,6 +102,44 @@ fi
 # --- 5. configure + build ----------------------------------------------------
 CMAKE_ARGS=(-S . -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE=Release)
 TARGET="psx-runtime"
+# Dependency provenance. The framework resolves every URL dependency in three
+# tiers (pre-extracted tree -> vendored third_party archive -> upstream URL,
+# all SHA256-pinned in psxrecomp/third_party/deps.manifest), so "CMake
+# downloads the dependencies" is already the supported model — SDL3, zlib,
+# libchdr and libjuice all have pinned fetch paths.
+#
+# What the fetches buy us: a Homebrew upgrade (or removal) cannot break the
+# build, and a statically built SDL3 also removes the brew dylib from the
+# BINARY's runtime dependencies. Without this, a `brew upgrade sdl3` between
+# builds invalidates cached include/lib paths (seen with harfbuzz 14.4.0 ->
+# 14.6.0).
+if [[ $VENDOR -eq 1 ]]; then
+  # Force the pinned FetchContent path even though brew ships SDL3: the
+  # framework then builds SDL3 3.4.10 static and links it in.
+  CMAKE_ARGS+=(-DCMAKE_DISABLE_FIND_PACKAGE_SDL3=ON -DPSX_SDL3_FETCH=ON)
+else
+  # Explicit OFF: these are cache vars, so leaving them out would silently
+  # keep a previous --vendor run's value.
+  CMAKE_ARGS+=(-DCMAKE_DISABLE_FIND_PACKAGE_SDL3=OFF)
+  echo "==> using system deps (Homebrew SDL3 preferred)"
+fi
+if [[ $PORTABLE -eq 1 ]]; then
+  # Color-emoji providers are optional upstream (outline glyphs when absent).
+  # Skipping them removes libfreetype/libharfbuzz from the binary's deps so the
+  # result runs on a clean Mac with no Homebrew packages at all.
+  CMAKE_ARGS+=(-DCMAKE_DISABLE_FIND_PACKAGE_Freetype=ON -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON)
+  echo "==> portable mode: freetype/harfbuzz disabled (emoji render as outlines)"
+else
+  CMAKE_ARGS+=(-DCMAKE_DISABLE_FIND_PACKAGE_Freetype=OFF -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=OFF)
+fi
+if [[ $OFFLINE -eq 1 ]]; then
+  # Hard-fails instead of hanging on a download; needs psxrecomp/third_party
+  # archives staged with psxrecomp/tools/ci/vendor_deps.sh.
+  CMAKE_ARGS+=(-DPSX_DEPS_OFFLINE=ON)
+  echo "==> offline mode: vendored archives only, no downloads"
+else
+  CMAKE_ARGS+=(-DPSX_DEPS_OFFLINE=OFF)
+fi
 if [[ $FULL -eq 1 ]]; then
   CMAKE_ARGS+=(-DBR2_BUILD_UNIVERSAL=ON)
   TARGET="psx-runtime-universal"

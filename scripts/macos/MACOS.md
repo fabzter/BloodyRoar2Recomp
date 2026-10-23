@@ -6,12 +6,15 @@ This overlay adds a native **macOS arm64** build that survives upstream pulls.
 ## TL;DR
 
 ```bash
-# one-time deps
+# one-time deps (compiler only — libraries are fetched by CMake)
 xcode-select --install
-brew install cmake ninja sdl3 python3 ccache
+brew install cmake ninja python3
 
 # build (also first-time: emitters + OpenBIOS C)
 scripts/macos/build-macos.sh
+
+# brew-free binary (runs on any Mac; emoji render as outlines)
+scripts/macos/build-macos.sh --portable
 
 # later, after upstream moved:
 scripts/macos/build-macos.sh --pull
@@ -28,6 +31,50 @@ OpenBIOS (MIT, bundled) is already linked — no retail BIOS dump needed.
 
 For the universal EU+USA+JP exe: generate game C per region first, then
 `scripts/macos/build-macos.sh --full`.
+
+## Dependencies — what CMake downloads vs. what it borrows
+
+Every URL dependency resolves through the framework's three-tier scheme
+(`psxrecomp/cmake/psx_dependency_archive.cmake`): a pre-extracted tree
+(`FETCHCONTENT_SOURCE_DIR_*`) → a vendored archive in `psxrecomp/third_party/`
+→ the upstream URL. All pins live in `psxrecomp/third_party/deps.manifest`
+with SHA256 hashes, so a download is verified exactly like a vendored copy.
+
+| Dep | Source | Notes |
+|---|---|---|
+| **SDL3 3.4.10** | **fetched + built static** (default) | `--system-deps` prefers Homebrew instead. Static means the binary has no `libSDL3` runtime dep. |
+| zlib 1.3.1 | system (macOS SDK) | fetched only if absent (`PSX_ZLIB_FETCH=ON` default) |
+| libchdr | fetched (pinned) | CHD disc support |
+| libjuice | fetched (pinned, via recomp-net) | netplay NAT traversal |
+| FreeType / HarfBuzz | **optional, system** | color emoji only; missing ⇒ outline glyphs, build still succeeds. `--portable` skips them entirely. |
+| CMake / Ninja / clang | host | also satisfiable by the retcomm `cmake-clang-v1` pack (cmake+ninja) + Xcode CLT clang |
+
+Flags:
+
+| Flag | Effect |
+|---|---|
+| *(default)* | pinned static SDL3 + color emoji if Homebrew has freetype/harfbuzz |
+| `--system-deps` | prefer Homebrew SDL3 (faster incremental builds, but the binary then needs `brew install sdl3`) |
+| `--portable` | disable freetype/harfbuzz too ⇒ **zero non-Apple dylibs** (`otool -L` clean) |
+| `--offline` | `PSX_DEPS_OFFLINE=ON`: never download, fail fast unless archives are vendored (`psxrecomp/tools/ci/vendor_deps.sh`) |
+
+Verify what a binary needs:
+
+```bash
+otool -L build-macos/BloodyRoar2_Recompiled | grep -vE '/usr/lib|/System'
+#  default   -> freetype + harfbuzz (brew)
+#  --portable-> (nothing)
+```
+
+### Why SDL3 is fetched by default
+
+Homebrew upgrades move Cellar paths; a cached `SDL3_DIR` /
+`PkgConfig::HARFBUZZ` include dir then points into a deleted directory and
+configure fails (`Imported target ... includes non-existent path`, or a bare
+`hb.h: file not found`). Pinning SDL3 to the FetchContent path makes the build
+immune to that class of breakage, and static linking removes the dependency
+from the *binary* too. The cache sanitizer (below) still covers the optional
+deps.
 
 ## How the overlay works
 
