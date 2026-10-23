@@ -97,6 +97,14 @@ re-downloaded it in a loop. With the patch, a pack without clang validates via
 - **Wizard wants to re-download the toolchain** — check
   `~/.local/share/retcomm/toolchains/cmake-clang-v1/` for `.broken` dirs; if
   present, the patch isn't applied (rebuild via `build-macos.sh`).
+- **`Imported target ... includes non-existent path` or `hb.h` not found** —
+  a `brew upgrade` moved a Cellar path the CMake cache still referenced.
+  `build-macos.sh` now sanitizes the cache automatically (drops cache lines
+  whose Homebrew Cellar paths are gone and forces pkg-config to re-resolve).
+  If you hit it in a pre-existing tree: re-run the script, it self-heals.
+- **`cannot rebase: You have unstaged changes`** — use `--pull`, which resets
+  the submodule patch and autostashes overlay edits before rebasing. A manual
+  `git pull` on `local/macos` needs a clean tree.
 - **`SDL3 was found but does not compile`** — Homebrew SDL3 + a portable pack
   on CMAKE_PREFIX_PATH clash; don't set CMAKE_PREFIX_PATH to the pack, the
   script doesn't.
