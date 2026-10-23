@@ -50,11 +50,13 @@ done
 # --- 1. upstream sync (optional) ---------------------------------------------
 if [[ $PULL -eq 1 ]]; then
   echo "==> git fetch + rebase onto origin/master"
-  # This repo keeps local overlay commits on the current branch (see MACOS.md);
-  # rebase replays them on top of upstream instead of a --ff-only pull that
-  # would refuse the moment we commit anything locally.
+  # Drop the applied submodule patch first: it makes psxrecomp "dirty", which
+  # blocks both rebase and submodule update. It is re-applied below.
+  git -C psxrecomp checkout -- . 2>/dev/null || true
   git fetch origin
-  git rebase origin/master
+  # autostash: uncommitted overlay edits are stashed, the branch is rebased,
+  # and the edits are restored afterwards — no need to commit before pulling.
+  git -c rebase.autoStash=true rebase origin/master
   echo "==> git submodule update (framework pins move with the repo)"
   git submodule update --init --recursive
 fi
@@ -104,6 +106,49 @@ if [[ $FULL -eq 1 ]]; then
     echo "WARNING: --full needs game C under generated/ (generate from your" >&2
     echo "         discs first — see header of this script). Building anyway." >&2
   fi
+fi
+
+# Homebrew upgrades delete old Cellar/<pkg>/<version> paths, and pkg-config
+# results are cached in CMakeCache.txt. A brew upgrade between builds then
+# makes configure fail with "Imported target ... includes non-existent path".
+# Drop cache lines whose Homebrew Cellar paths no longer exist; pkg-config
+# entries re-resolve on the next configure while compiled objects survive.
+if [[ -f "$BUILD_DIR/CMakeCache.txt" ]]; then
+  python3 - "$BUILD_DIR/CMakeCache.txt" <<'PYEOF'
+import re, sys
+from pathlib import Path
+cache = Path(sys.argv[1])
+pat = re.compile(r"/opt/homebrew/Cellar/[^/;\s:]+/[^/;\s:]+")
+text = cache.read_text(errors="replace")
+lines = text.splitlines(keepends=True)
+kept, dropped, poisoned = [], 0, False
+for line in lines:
+    if any(not Path(p).exists() for p in pat.findall(line)):
+        dropped += 1
+        poisoned = True
+        continue
+    kept.append(line)
+if poisoned:
+    kept = [l for l in kept if not l.startswith("prefix_result:")]
+# A half-purged pkg-config cache is worse than either state: if the resolved
+# <PREFIX>_INCLUDE_DIRS entry is gone but __pkg_config_checked_<PREFIX> remains,
+# pkg_check_modules() skips re-resolution and the imported target ends up with
+# NO include dirs (symptom: fatal error 'hb.h' file not found). Keep the two in
+# lockstep — drop the checked flag whenever its resolved values are absent.
+have = {l.split(":", 1)[0] for l in kept if ":" in l}
+final = []
+for line in kept:
+    m = re.match(r"__pkg_config_checked_(\w+):", line)
+    if m and (m.group(1) + "_INCLUDE_DIRS") not in have \
+            and (m.group(1) + "_CFLAGS") not in have:
+        dropped += 1
+        continue
+    final.append(line)
+kept = final
+if dropped:
+    cache.write_text("".join(kept))
+    print(f"    cache: dropped {dropped} stale Homebrew/pkg-config entr(y/ies)")
+PYEOF
 fi
 
 echo "==> cmake configure"
