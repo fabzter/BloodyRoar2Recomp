@@ -222,6 +222,37 @@ CI never ships game C — the recompiled game code is generated locally by each
 player from their legally owned disc (the full-build workflow injects it from
 the private `generated` repo only at build time).
 
+### macOS builds
+
+The stack builds natively on macOS (Apple Silicon and Intel) with Apple clang
+and SDL3; OpenGL is the default renderer (there is no Vulkan SDK, so the Vulkan
+backend compiles as an inert stub and a Vulkan request falls back with a
+message). One workflow proves it:
+
+- [`.github/workflows/macos-build.yml`](.github/workflows/macos-build.yml) —
+  builds the macOS **setup-host** (launcher + Generate & rebuild) on every push
+  and uploads `br2-<version>-macos-arm64.zip`.
+
+```bash
+xcode-select --install
+brew install cmake ninja python3
+
+scripts/build_macos.sh            # build-macos/BloodyRoar2_Recompiled (setup host)
+scripts/build_macos.sh --portable # same, but no Homebrew dylibs in the binary
+scripts/build_macos.sh --full     # universal EU+USA+JP (needs generated/ C)
+```
+
+`build_macos.sh` builds the recompiler emitters and the bundled OpenBIOS C when
+missing, then configures and builds the runtime. SDL3, zlib, libchdr and
+libjuice are downloaded by CMake and SHA256-verified against
+`psxrecomp/third_party/deps.manifest` — no Homebrew SDL3 is needed, and the
+pinned static build also removes `libSDL3` from the binary's runtime
+dependencies. `--offline` builds from vendored archives instead
+(`psxrecomp/tools/ci/vendor_deps.sh`).
+
+Like Linux, CI never ships game C: run the setup host, point it at your legally
+owned disc, and **Generate & rebuild** compiles the game locally.
+
 ### Folder structure
 
 ```text
