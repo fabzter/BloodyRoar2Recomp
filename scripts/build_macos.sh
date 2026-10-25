@@ -15,8 +15,6 @@
 #   scripts/build_macos.sh              # setup host (no game C)
 #   scripts/build_macos.sh --full       # universal EU+USA+JP (needs generated/)
 #   scripts/build_macos.sh --usa        # USA target (game_us.toml / SCUS-94424)
-#   scripts/build_macos.sh --portable   # binary without Homebrew dylibs
-#   scripts/build_macos.sh --offline    # vendored archives only, no downloads
 #   scripts/build_macos.sh --regen-bios # regenerate the bundled OpenBIOS C
 #   scripts/build_macos.sh --clean      # delete build dirs and exit
 #   scripts/build_macos.sh --jobs N     # parallel compile jobs
@@ -42,13 +40,11 @@ BUILD_DIR="${BR2_BUILD_DIR:-build-macos}"
 EMITTER_BUILD="build-recompiler"
 JOBS="$(sysctl -n hw.ncpu 2>/dev/null || echo 8)"
 
-FULL=0; USA=0; PORTABLE=0; OFFLINE=0; REGEN_BIOS=0; CLEAN=0
+FULL=0; USA=0; REGEN_BIOS=0; CLEAN=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --full) FULL=1 ;;
     --usa) USA=1 ;;
-    --portable) PORTABLE=1 ;;
-    --offline) OFFLINE=1 ;;
     --regen-bios) REGEN_BIOS=1 ;;
     --clean) CLEAN=1 ;;
     --jobs) JOBS="${2:?--jobs needs a number}"; shift 2; continue ;;
@@ -96,28 +92,9 @@ TARGET="psx-runtime"
 # runtime dependencies.
 CMAKE_ARGS+=(-DCMAKE_DISABLE_FIND_PACKAGE_SDL3=ON -DPSX_SDL3_FETCH=ON)
 
-# Color-emoji providers (FreeType + HarfBuzz) are optional upstream: without
-# them the launcher draws outline glyphs. --portable skips them so the binary
-# links nothing outside /usr/lib and /System. Both settings are passed
-# explicitly in every mode because CMake caches them — omitting the OFF case
-# would silently keep a previous --portable run's value.
-if [[ $PORTABLE -eq 1 ]]; then
-  CMAKE_ARGS+=(-DCMAKE_DISABLE_FIND_PACKAGE_Freetype=ON
-               -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=ON)
-  echo "==> portable: FreeType/HarfBuzz disabled (emoji render as outlines)"
-else
-  CMAKE_ARGS+=(-DCMAKE_DISABLE_FIND_PACKAGE_Freetype=OFF
-               -DCMAKE_DISABLE_FIND_PACKAGE_PkgConfig=OFF)
-fi
-
-if [[ $OFFLINE -eq 1 ]]; then
-  # Fail fast instead of stalling on a download; requires archives staged with
-  # psxrecomp/tools/ci/vendor_deps.sh.
-  CMAKE_ARGS+=(-DPSX_DEPS_OFFLINE=ON)
-  echo "==> offline: vendored archives only"
-else
-  CMAKE_ARGS+=(-DPSX_DEPS_OFFLINE=OFF)
-fi
+# Color-emoji providers (FreeType + HarfBuzz) are optional upstream: when
+# present the launcher renders colour glyphs, otherwise it falls back to
+# outlines and the build still succeeds. Nothing to configure.
 
 if [[ $FULL -eq 1 ]]; then
   CMAKE_ARGS+=(-DBR2_BUILD_UNIVERSAL=ON)

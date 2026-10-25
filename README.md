@@ -238,7 +238,6 @@ xcode-select --install
 brew install cmake ninja python3
 
 scripts/build_macos.sh            # build-macos/BloodyRoar2_Recompiled (setup host)
-scripts/build_macos.sh --portable # same, but no Homebrew dylibs in the binary
 scripts/build_macos.sh --usa      # USA target: BloodyRoar2_Recompiled_USA
 scripts/build_macos.sh --full     # universal EU+USA+JP (needs generated/ C)
 ```
@@ -253,8 +252,7 @@ missing, then configures and builds the runtime. SDL3, zlib, libchdr and
 libjuice are downloaded by CMake and SHA256-verified against
 `psxrecomp/third_party/deps.manifest` — no Homebrew SDL3 is needed, and the
 pinned static build also removes `libSDL3` from the binary's runtime
-dependencies. `--offline` builds from vendored archives instead
-(`psxrecomp/tools/ci/vendor_deps.sh`).
+dependencies.
 
 Like Linux, CI never ships game C: run the setup host, point it at your legally
 owned disc, and **Generate & rebuild** compiles the game locally.
