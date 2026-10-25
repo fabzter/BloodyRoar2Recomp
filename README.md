@@ -239,8 +239,14 @@ brew install cmake ninja python3
 
 scripts/build_macos.sh            # build-macos/BloodyRoar2_Recompiled (setup host)
 scripts/build_macos.sh --portable # same, but no Homebrew dylibs in the binary
+scripts/build_macos.sh --usa      # USA target: BloodyRoar2_Recompiled_USA
 scripts/build_macos.sh --full     # universal EU+USA+JP (needs generated/ C)
 ```
+
+Each region's setup wizard points at its own config: `codegen_setup.c` for EU
+(`game.toml`) and `codegen_setup_us.c` for USA (`game_us.toml`). Before that
+split, the USA exe carried the EU-pinned wizard, so first-run setup was forced
+on every launch and then rejected the US disc as the wrong dump.
 
 `build_macos.sh` builds the recompiler emitters and the bundled OpenBIOS C when
 missing, then configures and builds the runtime. SDL3, zlib, libchdr and

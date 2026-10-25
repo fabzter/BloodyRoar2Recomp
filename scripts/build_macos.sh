@@ -14,13 +14,15 @@
 # Usage:
 #   scripts/build_macos.sh              # setup host (no game C)
 #   scripts/build_macos.sh --full       # universal EU+USA+JP (needs generated/)
+#   scripts/build_macos.sh --usa        # USA target (game_us.toml / SCUS-94424)
 #   scripts/build_macos.sh --portable   # binary without Homebrew dylibs
 #   scripts/build_macos.sh --offline    # vendored archives only, no downloads
 #   scripts/build_macos.sh --regen-bios # regenerate the bundled OpenBIOS C
 #   scripts/build_macos.sh --clean      # delete build dirs and exit
 #   scripts/build_macos.sh --jobs N     # parallel compile jobs
 #
-# Output: build-macos/BloodyRoar2_Recompiled (+ mods/, bios/, assets/)
+# Output: build-macos/BloodyRoar2_Recompiled (+ mods/, bios/, assets/), or
+#         build-macos/BloodyRoar2_Recompiled_USA with --usa
 #
 # Full game C (optional; the wizard does this for you via Generate & rebuild):
 #   python3 psxrecomp/psxrecomp_cli.py generate --config game.toml \
@@ -40,10 +42,11 @@ BUILD_DIR="${BR2_BUILD_DIR:-build-macos}"
 EMITTER_BUILD="build-recompiler"
 JOBS="$(sysctl -n hw.ncpu 2>/dev/null || echo 8)"
 
-FULL=0; PORTABLE=0; OFFLINE=0; REGEN_BIOS=0; CLEAN=0
+FULL=0; USA=0; PORTABLE=0; OFFLINE=0; REGEN_BIOS=0; CLEAN=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --full) FULL=1 ;;
+    --usa) USA=1 ;;
     --portable) PORTABLE=1 ;;
     --offline) OFFLINE=1 ;;
     --regen-bios) REGEN_BIOS=1 ;;
@@ -125,6 +128,24 @@ if [[ $FULL -eq 1 ]]; then
   fi
 fi
 
+# USA is a separate target with its own config (game_us.toml), its own generated
+# C (SCUS_944.24_*) and its own executable name. The universal target already
+# links all regions, so asking for both is a mistake rather than a merge.
+if [[ $USA -eq 1 ]]; then
+  if [[ $FULL -eq 1 ]]; then
+    echo "error: --usa and --full are mutually exclusive" >&2
+    exit 2
+  fi
+  TARGET="psx-runtime-us"
+  EXE_NAME="BloodyRoar2_Recompiled_USA"
+  if [[ ! -f generated/SCUS_944.24_dispatch.c ]]; then
+    echo "error: USA game C is missing. Generate it first:" >&2
+    echo "  python3 psxrecomp/psxrecomp_cli.py generate --config game_us.toml \\" >&2
+    echo "    --project-root . --disc \"disc/Bloody Roar II (USA).cue\"" >&2
+    exit 1
+  fi
+fi
+
 # --- 4. heal stale Homebrew paths in the CMake cache -------------------------
 # pkg-config results are cached with absolute Homebrew Cellar paths. After a
 # `brew upgrade`, configure fails on a path that no longer exists (typically
@@ -173,7 +194,7 @@ echo "==> building $TARGET"
 cmake --build "$BUILD_DIR" --target "$TARGET" -j "$JOBS"
 
 echo
-echo "==> done: $BUILD_DIR/BloodyRoar2_Recompiled"
+echo "==> done: $BUILD_DIR/${EXE_NAME:-BloodyRoar2_Recompiled}"
 echo "    Run it and point the wizard at your legally owned disc (Step 2),"
 echo "    then Generate & rebuild (Step 3)."
 if [[ $FULL -eq 1 ]]; then
