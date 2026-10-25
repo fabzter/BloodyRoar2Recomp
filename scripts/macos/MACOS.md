@@ -94,6 +94,30 @@ loudly with instructions to regenerate it:
 git -C psxrecomp diff > scripts/macos/<name>.patch
 ```
 
+## Packaging a double-clickable .app
+
+```bash
+scripts/macos/package-app.sh --usa     # -> dist/Bloody Roar II Recompiled (USA).app
+scripts/macos/package-app.sh           # EU, or USA automatically if that build exists
+```
+
+Why bundle at all: a bare Mach-O inherits its TCC identity from the terminal that
+launched it, so **Input Monitoring** (needed for HID input and for rumble output
+reports) must be granted to that terminal, per terminal, forever. A bundle with
+its own `CFBundleIdentifier` is granted once, for the game.
+
+Layout: the runtime anchors every sidecar (game `*.toml`, `bios/`, `mods/`,
+`assets/`, `settings.toml`, saves) to the executable's own directory, so the
+payload lives in `Contents/MacOS/` rather than `Contents/Resources/`. User state
+(`settings.toml`, `disc.cfg`, saves) is deliberately **not** copied — the bundle
+starts clean.
+
+Signing: the executable is signed ad-hoc; the *container* cannot be sealed
+because codesign refuses the mod catalog's dotted package directories
+(`br2.enhancement.turbo` etc. look like sub-bundles). The app still launches
+(verified). Distributing it to another machine would need a Developer ID
+signature plus notarisation.
+
 ## Region targets
 
 `scripts/macos/build-macos.sh --usa` builds the USA target
