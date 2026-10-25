@@ -81,11 +81,16 @@ screen_w_imms = ["0x200"]
 screen_h_imms = ["0x1E0"]
 
 [controller]
-default_mode = "digital"
-lock_mode = true
+# Analog (DualShock) so the emulated pad answers the config-mode handshake
+# rumble needs (0x43/0x4D). A plain digital pad cannot rumble: the game has
+# no way to send motor values to it. lock_mode stays false so the launcher
+# can offer the mode, and so settings.toml is not clamped to digital.
+default_mode = "analog"
+lock_mode = false
 
 # Online mount gate: digests + track count + optional TOC fingerprint
 # (see docs/NETPLAY.md).
+multitap_analog = false
 [netplay]
 require_cue = true
 required_tracks = 1

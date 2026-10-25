@@ -15,6 +15,23 @@ if(EXISTS "${PSXRECOMP_ROOT}/lib/recomp-net/CMakeLists.txt")
 endif()
 include("${PSXRECOMP_ROOT}/runtime/runtime.cmake")
 
+# --- macOS DualShock 4 rumble -----------------------------------------------
+# SDL's HIDAPI PS4 driver passes the Bluetooth effects report id separately
+# from the payload; DS4-compatible pads accept that write and ignore it, so
+# rumble never starts. src/platform/psx_macos_hid_rumble.cpp writes the same
+# frame with report id 0 and the id inside the buffer (the convention these
+# pads obey, verified against hardware). The runtime forwarder only calls it
+# when PSX_TITLE_HID_RUMBLE is defined and the pad is a DS4 family device.
+function(br2_macos_hid_rumble target)
+    if(APPLE)
+        target_sources(${target} PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/psx_macos_hid_rumble.cpp")
+        target_compile_definitions(${target} PRIVATE PSX_TITLE_HID_RUMBLE=1)
+        target_link_libraries(${target} PRIVATE
+            "-framework IOKit" "-framework CoreFoundation")
+    endif()
+endfunction()
+
 # --- Mod catalog curation (framework v4) -----------------------------------
 # The framework stages its shared builtin mod catalog (psxrecomp/mods/builtin)
 # next to every game exe. We curate it here via the allowlist:
@@ -89,6 +106,7 @@ psxrecomp_add_game_runtime(psx-runtime
 # unprefixed dispatch interface through the game-backend registry (which also
 # hosts the universal selection logic).
 target_compile_definitions(psx-runtime PRIVATE PSX_GAME_BACKEND_REGISTRY=1)
+br2_macos_hid_rumble(psx-runtime)
 
 psxrecomp_add_game_runtime(psx-runtime-us
     PGXP
@@ -109,10 +127,11 @@ psxrecomp_add_game_runtime(psx-runtime-us
         "${CMAKE_CURRENT_SOURCE_DIR}/src/mods/br2_turbo_plugin.c"
     GEN_MARKER "generated/SCUS_944.24_dispatch.c"
     GEN_FULL_GLOB "generated/SCUS_944.24_full_*.c"
-    CODEGEN_SETUP_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/codegen_setup.c"
+    CODEGEN_SETUP_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/codegen_setup_us.c"
 )
 
 target_compile_definitions(psx-runtime-us PRIVATE PSX_GAME_BACKEND_REGISTRY=1)
+br2_macos_hid_rumble(psx-runtime-us)
 
 if(BR2_BUILD_JAPAN)
     psxrecomp_add_game_runtime(psx-runtime-japan
@@ -137,6 +156,7 @@ if(BR2_BUILD_JAPAN)
         CODEGEN_SETUP_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/codegen_setup_japan.c"
     )
     target_compile_definitions(psx-runtime-japan PRIVATE PSX_GAME_BACKEND_REGISTRY=1)
+    br2_macos_hid_rumble(psx-runtime-japan)
 endif()
 
 if(BR2_BUILD_UNIVERSAL)
@@ -175,6 +195,7 @@ if(BR2_BUILD_UNIVERSAL)
         CODEGEN_SETUP_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/codegen_setup.c"
     )
     target_compile_definitions(psx-runtime-universal PRIVATE PSX_GAME_BACKEND_REGISTRY=1)
+    br2_macos_hid_rumble(psx-runtime-universal)
     # Size: the generated per-region C is ~20 MB of machine code each and
     # dominates the universal exe. Compile ONLY that code for size (the shared
     # runtime keeps -O3 for emulation speed), put each generated function in its

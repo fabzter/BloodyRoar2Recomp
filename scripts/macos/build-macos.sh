@@ -36,17 +36,18 @@ BUILD_DIR="${BR2_BUILD_DIR:-build-macos}"
 EMITTER_BUILD="build-recompiler"
 JOBS="$(sysctl -n hw.ncpu 2>/dev/null || echo 8)"
 
-PULL=0; FULL=0; REGEN_BIOS=0; CLEAN=0; VENDOR=1; PORTABLE=0; OFFLINE=0
+PULL=0; FULL=0; USA=0; REGEN_BIOS=0; CLEAN=0; VENDOR=1; PORTABLE=0; OFFLINE=0
 for arg in "$@"; do
   case "$arg" in
     --pull) PULL=1 ;;
     --full) FULL=1 ;;
+    --usa) USA=1 ;;               # USA region (game_us.toml / SCUS-94424)
     --regen-bios) REGEN_BIOS=1 ;;
     --clean) CLEAN=1 ;;
     --system-deps) VENDOR=0 ;;   # prefer Homebrew SDL3 over the pinned fetch
     --portable) PORTABLE=1 ;;    # brew-free binary: no freetype/harfbuzz either
     --offline) OFFLINE=1 ;;      # never download (vendored third_party archives)
-    *) echo "unknown flag: $arg (use --pull|--full|--regen-bios|--clean|--system-deps|--portable|--offline)" >&2; exit 2 ;;
+    *) echo "unknown flag: $arg (use --pull|--full|--usa|--regen-bios|--clean|--system-deps|--portable|--offline)" >&2; exit 2 ;;
   esac
 done
 
@@ -148,6 +149,20 @@ if [[ $FULL -eq 1 ]]; then
     echo "         discs first — see header of this script). Building anyway." >&2
   fi
 fi
+if [[ $USA -eq 1 ]]; then
+  if [[ $FULL -eq 1 ]]; then
+    echo "error: --usa and --full are mutually exclusive (universal links all regions)" >&2
+    exit 2
+  fi
+  TARGET="psx-runtime-us"
+  EXE_NAME="BloodyRoar2_Recompiled_USA"
+  if [[ ! -f generated/SCUS_944.24_dispatch.c ]]; then
+    echo "error: USA game C is missing — generate it first:" >&2
+    echo "  python3 psxrecomp/psxrecomp_cli.py generate --config game_us.toml \\" >&2
+    echo "    --project-root . --disc \"disc/Bloody Roar II (USA).cue\"" >&2
+    exit 1
+  fi
+fi
 
 # Homebrew upgrades delete old Cellar/<pkg>/<version> paths, and pkg-config
 # results are cached in CMakeCache.txt. A brew upgrade between builds then
@@ -204,6 +219,6 @@ if [[ $CLEAN -eq 1 ]]; then
   rm -rf "$BUILD_DIR" "$EMITTER_BUILD"
 fi
 
-echo "==> done: $BUILD_DIR/$(grep -o 'OUTPUT_NAME[^:]*' /dev/null 2>/dev/null || true)"
-echo "    binary: $BUILD_DIR/BloodyRoar2_Recompiled"
+echo "==> done: $BUILD_DIR/${EXE_NAME:-BloodyRoar2_Recompiled}"
+echo "    binary: $BUILD_DIR/${EXE_NAME:-BloodyRoar2_Recompiled}"
 echo "    (mods/ bios/ assets/ are staged next to it; disc goes in disc/)"
