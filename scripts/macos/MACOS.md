@@ -94,6 +94,49 @@ loudly with instructions to regenerate it:
 git -C psxrecomp diff > scripts/macos/<name>.patch
 ```
 
+## Region targets
+
+`scripts/macos/build-macos.sh --usa` builds the USA target
+(`psx-runtime-us` → `build-macos/BloodyRoar2_Recompiled_USA`) from game C you
+generate with `game_us.toml`:
+
+```bash
+python3 psxrecomp/psxrecomp_cli.py generate --config game_us.toml \
+  --project-root . --disc "disc/Bloody Roar II (USA).cue"
+scripts/macos/build-macos.sh --usa
+```
+
+Each region owns its own setup-wizard config (`codegen_setup.c` for EU,
+`codegen_setup_us.c` for USA). Before that split, the USA exe carried the
+EU-pinned wizard: the sources probe looked for `generated/SLES_017.22_dispatch.c`,
+so first-run setup was forced on every launch and then rejected the US disc as
+"wrong dump".
+
+## Rumble (DS4-compatible pads over Bluetooth)
+
+Two separate problems, both fixed:
+
+1. **The pad was a digital SCPH-1080.** `game_us.toml` had
+   `[controller] default_mode = "digital"` + `lock_mode = true`, and a plain
+   digital pad has no config-mode protocol — rumble is only carried by the
+   DualShock `0x43`/`0x4D` handshake. Now `analog` with `lock_mode = false`.
+
+2. **SDL's effects write is ignored by these pads.** SDL/hidapi passes the
+   Bluetooth effects report id *separately* from the payload; the pad accepts
+   that write (`IOReturn 0`) and does nothing. The convention it obeys
+   (verified variant by variant — F rumbles, G and H do not) is report id `0`
+   with the id inside a 78-byte buffer:
+   `frame[0]=0x11, frame[1]=0xC0, frame[3]=0x03, frame[6]=small,
+   frame[7]=large`, CRC32 over `0xA2` + `frame[0..73]` at `frame[74..77]`.
+   Implemented in `src/platform/psx_macos_hid_rumble.cpp` (title-owned, linked
+   on Apple targets by `br2_macos_hid_rumble()` in `CMakeLists.txt`).
+
+The runtime forwarder also holds effects for 250 ms and re-arms them while
+motors are active (BR2 pulses `small=1,0,1,0` at 60 Hz, which used to produce
+~16 ms blips), with an explicit `rumble_stop_pending` flag so a stop frame is
+always sent. Trace with `PSX_RUMBLE_TRACE=1`: expect
+`rumble-hw: … via=hid` on a hit and `… via=hid (stop)` after it.
+
 ## Patches
 
 ### `psxrecomp-macos-system-clang.patch`
