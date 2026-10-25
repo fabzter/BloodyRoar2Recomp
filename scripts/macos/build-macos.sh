@@ -100,6 +100,47 @@ if [[ $REGEN_BIOS -eq 1 || ! -f psxrecomp/generated/OpenBIOS_full.c ]]; then
      bash tools/regen_bios.sh --config bios/OpenBIOS.toml)
 fi
 
+# --- 4b. guard: controller config that silently disables rumble --------------
+# A digital seat is emulated as an SCPH-1080, which has no config-mode handshake
+# and therefore cannot receive rumble. Two independent switches cause it, and
+# the persisted one wins: [controller] in game*.toml, and p1_mode/p2_mode in the
+# settings.toml next to the exe.
+python3 - "$BUILD_DIR" "$([[ $USA -eq 1 ]] && echo game_us.toml || echo game.toml)" <<'GUARD_EOF'
+import re, sys
+from pathlib import Path
+
+build_dir = Path(sys.argv[1])
+cfg = sys.argv[2]
+problems = []
+
+f = Path(cfg)
+if f.exists():
+    text = f.read_text(errors="replace")
+    block = re.search(r"^\[controller\](.*?)(?=^\[|\Z)", text, re.S | re.M)
+    if block:
+        body = block.group(1)
+        mode = re.search(r'^\s*default_mode\s*=\s*"([^"]+)"', body, re.M)
+        lock = re.search(r"^\s*lock_mode\s*=\s*(true|false)", body, re.M)
+        if mode and mode.group(1) == "digital" and lock and lock.group(1) == "true":
+            problems.append(cfg + ": [controller] default_mode=digital + lock_mode=true")
+
+settings = build_dir / "settings.toml"
+if settings.exists():
+    s = settings.read_text(errors="replace")
+    for key in ("p1_mode", "p2_mode"):
+        m = re.search(r'^\s*' + key + r'\s*=\s*"([^"]+)"', s, re.M)
+        if m and m.group(1) == "digital":
+            problems.append(str(settings) + ": " + key + "=digital (overrides game*.toml)")
+
+if problems:
+    print("WARNING: rumble is disabled by controller configuration:", file=sys.stderr)
+    for prob in problems:
+        print("  - " + prob, file=sys.stderr)
+    print("  A digital seat has no DualShock config handshake, so the game cannot", file=sys.stderr)
+    print("  send motor values. Use default_mode=\"analog\" + lock_mode=false, and", file=sys.stderr)
+    print("  set p1_mode/p2_mode=analog in the staged settings.toml.", file=sys.stderr)
+GUARD_EOF
+
 # --- 5. configure + build ----------------------------------------------------
 CMAKE_ARGS=(-S . -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE=Release)
 TARGET="psx-runtime"
