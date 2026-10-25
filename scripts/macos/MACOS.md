@@ -137,6 +137,18 @@ motors are active (BR2 pulses `small=1,0,1,0` at 60 Hz, which used to produce
 always sent. Trace with `PSX_RUMBLE_TRACE=1`: expect
 `rumble-hw: … via=hid` on a hit and `… via=hid (stop)` after it.
 
+**Writes must not run on the frame loop.** `IOHIDDeviceSetReport` is a
+synchronous Bluetooth write: measured 5–20 ms per call, peaking at 78–142 ms,
+and at 25–31 writes/s the game lost most of its frame budget whenever the pad
+was vibrating (30–90 ms frames). All writes now happen on a dedicated writer
+thread fed by a one-slot mailbox, and rapid pulses are coalesced to one write
+per 100 ms with start/stop still sent immediately. `PSX_RUMBLE_TRACE=1` also
+prints the writer's cost per second:
+
+```
+psxrecomp hid-rumble: 8 writes/s, avg 6.2 ms, max 41.0 ms (writer thread)
+```
+
 ## Patches
 
 ### `psxrecomp-macos-system-clang.patch`

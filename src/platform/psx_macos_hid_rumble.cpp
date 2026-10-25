@@ -16,15 +16,21 @@
 //   frame[7]      = large / low-frequency motor  (0..255)
 //   frame[74..77] = CRC32 over the byte 0xA2 followed by frame[0..73]
 //
+// THREADING: IOHIDDeviceSetReport is a SYNCHRONOUS Bluetooth write and measured
+// 5-20 ms per call (spikes to ~78 ms) on this hardware. Calling it from the
+// frame loop cost 30-90 ms frames -- a visible FPS collapse. All writes now
+// happen on a dedicated worker thread; the frame loop only publishes the
+// latest motor values (a one-slot mailbox, so a slow link can never build a
+// queue). The pad holds its effect until told otherwise, so the worker sends on
+// change and re-sends the active effect at most every kKeepaliveMs.
+//
 // Scope: only DS4-family pads (VID 0x054c, PID 0x05c4 / 0x09cc). Everything
 // else keeps SDL's rumble path, which is correct for it.
-//
-// Built into the game targets by CMake (br2_macos_hid_rumble) with
-// PSX_TITLE_HID_RUMBLE defined; the runtime's rumble forwarder calls these when
-// that macro is present and attach() said it will drive the pad.
 
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #if defined(__APPLE__)
 
@@ -32,11 +38,71 @@
 #include <IOKit/hid/IOHIDKeys.h>
 #include <IOKit/hid/IOHIDManager.h>
 
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
+#include <thread>
+
 namespace {
 
+constexpr int kKeepaliveMs = 100; /* ≤10 writes/s; the pad holds the effect */
+
 IOHIDDeviceRef g_dev = nullptr;
-uint8_t g_last_small = 0;
-uint8_t g_last_large = 0;
+
+/* --- one-slot mailbox between the frame loop and the writer thread ---------
+ */
+std::mutex g_mu;
+std::condition_variable g_cv;
+uint8_t g_req_small = 0;
+uint8_t g_req_large = 0;
+bool g_req_pending = false;
+bool g_quit = false;
+std::thread g_worker;
+
+uint8_t g_sent_small = 0;
+uint8_t g_sent_large = 0;
+bool g_sent_any = false;
+
+/* --- write-cost instrumentation (PSX_RUMBLE_TRACE=1) ---------------------- */
+double now_ms(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1e6;
+}
+bool trace_enabled(void) {
+  static const bool on = [] {
+    const char *e = getenv("PSX_RUMBLE_TRACE");
+    return e && e[0] && e[0] != '0';
+  }();
+  return on;
+}
+double g_win_start = 0.0;
+unsigned g_win_calls = 0;
+double g_win_total_ms = 0.0;
+double g_win_max_ms = 0.0;
+
+void account_write(double ms) {
+  if (!trace_enabled())
+    return;
+  const double t = now_ms();
+  if (g_win_start == 0.0)
+    g_win_start = t;
+  g_win_calls++;
+  g_win_total_ms += ms;
+  if (ms > g_win_max_ms)
+    g_win_max_ms = ms;
+  if (t - g_win_start >= 1000.0) {
+    fprintf(stdout,
+            "psxrecomp hid-rumble: %u writes/s, avg %.2f ms, max %.2f ms "
+            "(writer thread)\n",
+            g_win_calls, g_win_total_ms / (double)g_win_calls, g_win_max_ms);
+    fflush(stdout);
+    g_win_start = t;
+    g_win_calls = 0;
+    g_win_total_ms = 0.0;
+    g_win_max_ms = 0.0;
+  }
+}
 
 uint32_t crc32_ieee(const uint8_t *data, size_t len) {
   uint32_t crc = 0xFFFFFFFFu;
@@ -65,14 +131,59 @@ void build_frame(uint8_t small, uint8_t large, uint8_t out[78]) {
   out[77] = (uint8_t)((crc >> 24) & 0xFFu);
 }
 
-bool write_frame(const uint8_t frame[78]) {
+bool write_frame(uint8_t small, uint8_t large) {
   if (!g_dev)
     return false;
+  uint8_t frame[78];
+  build_frame(small, large, frame);
   uint8_t buf[78];
-  memcpy(buf, frame, 78);
+  memcpy(buf, frame, sizeof(buf));
+  const double t0 = trace_enabled() ? now_ms() : 0.0;
   const IOReturn r = IOHIDDeviceSetReport(g_dev, kIOHIDReportTypeOutput,
                                           0 /* report id */, buf, sizeof(buf));
+  if (trace_enabled())
+    account_write(now_ms() - t0);
   return r == kIOReturnSuccess;
+}
+
+/* Writer thread: drains the mailbox, re-sends the active effect as a keepalive,
+ * and never blocks the caller of update(). A stop request is sent once, then
+ * the loop idles. */
+void writer_loop() {
+  using namespace std::chrono;
+  for (;;) {
+    uint8_t s = 0, l = 0;
+    bool have = false;
+    {
+      std::unique_lock<std::mutex> lk(g_mu);
+      g_cv.wait_for(lk, milliseconds(kKeepaliveMs),
+                    [&] { return g_quit || g_req_pending; });
+      if (g_quit)
+        break;
+      if (g_req_pending) {
+        s = g_req_small;
+        l = g_req_large;
+        g_req_pending = false;
+        have = true;
+      } else if (g_sent_any) {
+        /* No change and the last effect is still active: refresh it so
+         * a dropped Bluetooth frame cannot leave the pad silent. */
+        s = g_sent_small;
+        l = g_sent_large;
+        have = true;
+      }
+    }
+    if (!have)
+      continue;
+    /* Change of value always writes; an identical refresh also writes on
+     * the keepalive tick, which is what keeps a sustained effect alive. */
+    if (!g_sent_any || s != g_sent_small || l != g_sent_large || s || l) {
+      (void)write_frame(s, l);
+      g_sent_small = s;
+      g_sent_large = l;
+      g_sent_any = (s || l);
+    }
+  }
 }
 
 bool ds4_family(uint16_t vid, uint16_t pid) {
@@ -134,30 +245,55 @@ int psx_macos_hid_rumble_attach(uint16_t vid, uint16_t pid) {
   CFRelease(match);
   CFRelease(vid_n);
   CFRelease(pid_n);
+
+  if (attached) {
+    {
+      std::lock_guard<std::mutex> lk(g_mu);
+      g_quit = false;
+      g_req_pending = false;
+      g_sent_any = false;
+      g_sent_small = g_sent_large = 0;
+    }
+    g_worker = std::thread(writer_loop);
+  }
   return attached;
 }
 
+/* Called from the frame loop: publish the latest motor values. Never blocks on
+ * the device -- the writer thread owns every HID write. */
 void psx_macos_hid_rumble_update(uint8_t small, uint8_t large) {
   if (!g_dev)
     return;
-  if (small == g_last_small && large == g_last_large && !small && !large)
-    return;
-  uint8_t frame[78];
-  build_frame(small, large, frame);
-  (void)write_frame(frame);
-  g_last_small = small;
-  g_last_large = large;
+  {
+    std::lock_guard<std::mutex> lk(g_mu);
+    g_req_small = small;
+    g_req_large = large;
+    g_req_pending = true;
+  }
+  g_cv.notify_one();
 }
 
 void psx_macos_hid_rumble_detach(void) {
   if (!g_dev)
     return;
-  uint8_t frame[78];
-  build_frame(0, 0, frame);
-  (void)write_frame(frame);
+  {
+    std::lock_guard<std::mutex> lk(g_mu);
+    g_req_small = 0;
+    g_req_large = 0;
+    g_req_pending = true;
+    g_quit = true;
+  }
+  g_cv.notify_one();
+  if (g_worker.joinable())
+    g_worker.join();
+  /* Belt and braces: several zero frames, because one can be dropped and the
+   * motor persists until a valid stop frame lands. */
+  for (int i = 0; i < 4; ++i)
+    (void)write_frame(0, 0);
+  g_sent_any = false;
+  g_sent_small = g_sent_large = 0;
   IOHIDDeviceClose(g_dev, kIOHIDOptionsTypeNone);
   g_dev = nullptr;
-  g_last_small = g_last_large = 0;
 }
 
 } // extern "C"
