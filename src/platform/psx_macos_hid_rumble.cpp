@@ -196,7 +196,7 @@ bool ds4_family(uint16_t vid, uint16_t pid) {
 
 extern "C" {
 
-int psx_macos_hid_rumble_attach(uint16_t vid, uint16_t pid) {
+int psx_host_rumble_attach(uint16_t vid, uint16_t pid) {
   if (!ds4_family(vid, pid))
     return 0;
   if (g_dev)
@@ -261,7 +261,7 @@ int psx_macos_hid_rumble_attach(uint16_t vid, uint16_t pid) {
 
 /* Called from the frame loop: publish the latest motor values. Never blocks on
  * the device -- the writer thread owns every HID write. */
-void psx_macos_hid_rumble_update(uint8_t small, uint8_t large) {
+void psx_host_rumble_update(uint8_t small, uint8_t large) {
   if (!g_dev)
     return;
   {
@@ -273,7 +273,7 @@ void psx_macos_hid_rumble_update(uint8_t small, uint8_t large) {
   g_cv.notify_one();
 }
 
-void psx_macos_hid_rumble_detach(void) {
+void psx_host_rumble_detach(void) {
   if (!g_dev)
     return;
   {
@@ -301,16 +301,16 @@ void psx_macos_hid_rumble_detach(void) {
 #else /* !__APPLE__ */
 
 extern "C" {
-int psx_macos_hid_rumble_attach(uint16_t vid, uint16_t pid) {
+int psx_host_rumble_attach(uint16_t vid, uint16_t pid) {
   (void)vid;
   (void)pid;
   return 0;
 }
-void psx_macos_hid_rumble_update(uint8_t small, uint8_t large) {
+void psx_host_rumble_update(uint8_t small, uint8_t large) {
   (void)small;
   (void)large;
 }
-void psx_macos_hid_rumble_detach(void) {}
+void psx_host_rumble_detach(void) {}
 }
 
 #endif /* __APPLE__ */

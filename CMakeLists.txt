@@ -26,7 +26,6 @@ function(br2_macos_hid_rumble target)
     if(APPLE)
         target_sources(${target} PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/psx_macos_hid_rumble.cpp")
-        target_compile_definitions(${target} PRIVATE PSX_TITLE_HID_RUMBLE=1)
         target_link_libraries(${target} PRIVATE
             "-framework IOKit" "-framework CoreFoundation")
     endif()

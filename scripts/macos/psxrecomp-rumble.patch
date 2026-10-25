@@ -1,26 +1,31 @@
 diff --git a/runtime/src/main.cpp b/runtime/src/main.cpp
-index 06e51f4f..c3a2a08b 100644
+index 06e51f4f..10f97d80 100644
 --- a/runtime/src/main.cpp
 +++ b/runtime/src/main.cpp
-@@ -365,6 +365,17 @@ static SDL_Texture*  sdl_texture;
+@@ -365,6 +365,22 @@ static SDL_Texture*  sdl_texture;
  /* Per-player input device routing (PSX ports 1 & 2). Seeded from the
   * [controller] settings the launcher writes; the runtime opens the matching
   * SDL controller (or uses the keyboard) and feeds each PSX pad slot. */
-+#if defined(__APPLE__) && defined(PSX_TITLE_HID_RUMBLE)
-+/* Provided by the title's src/platform/psx_macos_hid_rumble.cpp. DS4-family
-+ * Bluetooth pads accept SDL's effects write and ignore it; this writer uses the
-+ * report-id-0 + in-buffer-id convention those pads obey. */
++/* Optional title-provided rumble backend (weak symbols: a title opts in by
++ * defining them; the framework links and works without).
++ *
++ * Motivating case: DS4-family pads over Bluetooth accept SDL's HIDAPI effects
++ * write (IOReturn 0) and ignore it, because hidapi passes the Bluetooth report
++ * id separately from the payload. A title that knows the platform-specific
++ * convention can supply psx_host_rumble_* and take over for those pads. */
++#if defined(__APPLE__) && defined(PSX_SDL3)
 +extern "C" {
-+int  psx_macos_hid_rumble_attach(uint16_t vid, uint16_t pid);
-+void psx_macos_hid_rumble_update(uint8_t small, uint8_t large);
-+void psx_macos_hid_rumble_detach(void);
++__attribute__((weak)) int  psx_host_rumble_attach(uint16_t vid, uint16_t pid);
++__attribute__((weak)) void psx_host_rumble_update(uint8_t small, uint8_t large);
++__attribute__((weak)) void psx_host_rumble_detach(void);
 +}
++#define PSX_HAS_TITLE_RUMBLE_HOOK 1
 +#endif
 +
  struct PlayerInput {
      int   kind = 0;            /* 0=none, 1=keyboard, 2=controller */
      char  guid[40] = {0};      /* SDL joystick GUID string when kind==controller */
-@@ -380,6 +391,18 @@ struct PlayerInput {
+@@ -380,6 +396,18 @@ struct PlayerInput {
      uint8_t rumble_large = 0;
      bool    rumble_known = false;
      bool    rumble_warned = false;
@@ -39,20 +44,20 @@ index 06e51f4f..c3a2a08b 100644
  };
  static PlayerInput g_players[PSX_MAX_PLAYERS];
  /* Offline SIO sample loop bound (from game.toml players; clamped). */
-@@ -4284,6 +4307,12 @@ static void load_input_config(const char* argv0) {
+@@ -4284,6 +4312,12 @@ static void load_input_config(const char* argv0) {
  }
  
  static void close_player(PlayerInput& p) {
-+#if defined(__APPLE__) && defined(PSX_TITLE_HID_RUMBLE)
-+    if (p.hid_rumble) {
-+        psx_macos_hid_rumble_detach();
++#if defined(PSX_HAS_TITLE_RUMBLE_HOOK)
++    if (p.hid_rumble && psx_host_rumble_detach) {
++        psx_host_rumble_detach();
 +        p.hid_rumble = false;
 +    }
 +#endif
      if (p.handle) {
          if (p.rumble_small || p.rumble_large)
              (void)SDL_GameControllerRumble(p.handle, 0, 0, 0);
-@@ -4295,6 +4324,8 @@ static void close_player(PlayerInput& p) {
+@@ -4295,6 +4329,8 @@ static void close_player(PlayerInput& p) {
      p.rumble_large = 0;
      p.rumble_known = false;
      p.rumble_warned = false;
@@ -61,28 +66,29 @@ index 06e51f4f..c3a2a08b 100644
  }
  
  static void close_controller(void) {
-@@ -4349,6 +4380,20 @@ static void open_player(PlayerInput& p, int self_slot) {
+@@ -4349,6 +4385,21 @@ static void open_player(PlayerInput& p, int self_slot) {
                       name ? name : "(unnamed)");
          p.rumble_known = false;
          p.rumble_warned = false;
-+#if defined(__APPLE__) && defined(PSX_TITLE_HID_RUMBLE)
-+        {
++#if defined(PSX_HAS_TITLE_RUMBLE_HOOK)
++        p.hid_rumble = false;
++        if (psx_host_rumble_attach) {
 +            const SDL_JoystickID inst_id = SDL_JoystickGetDeviceInstanceID(chosen);
-+            p.hid_rumble = psx_macos_hid_rumble_attach(
++            p.hid_rumble = psx_host_rumble_attach(
 +                               SDL_GetJoystickVendorForID(inst_id),
 +                               SDL_GetJoystickProductForID(inst_id)) != 0;
++            if (p.hid_rumble)
++                std::fprintf(stdout,
++                    "psxrecomp runtime: slot %d rumble via title backend\n",
++                    self_slot + 1);
 +        }
-+        if (p.hid_rumble)
-+            std::fprintf(stdout,
-+                "psxrecomp runtime: slot %d rumble via IOKit HID (DS4 family)\n",
-+                self_slot + 1);
 +#else
 +        p.hid_rumble = false;
 +#endif
      }
  }
  
-@@ -4375,24 +4420,63 @@ static void update_controller_rumble(void) {
+@@ -4375,24 +4426,61 @@ static void update_controller_rumble(void) {
  
          const bool changed = !p.rumble_known || p.rumble_small != small ||
                               p.rumble_large != large;
@@ -107,12 +113,10 @@ index 06e51f4f..c3a2a08b 100644
 +        if (stop_due) p.rumble_stop_pending = false;
 +        if (active || stop_due) {
 +            int rc = 0;
-+#if defined(__APPLE__) && defined(PSX_TITLE_HID_RUMBLE)
-+            if (p.hid_rumble) {
-+                /* Raw PSX motor bytes (0..255); the writer builds the DS4 BT
-+                 * effects frame. Re-sent every active frame on purpose. */
-+                psx_macos_hid_rumble_update(active ? small : 0,
-+                                            active ? large : 0);
++#if defined(PSX_HAS_TITLE_RUMBLE_HOOK)
++            if (p.hid_rumble && psx_host_rumble_update) {
++                /* Raw PSX motor bytes (0..255) for this platform's writer. */
++                psx_host_rumble_update(active ? small : 0, active ? large : 0);
 +            } else
 +#endif
 +            {
