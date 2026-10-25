@@ -242,6 +242,16 @@ scripts/build_macos.sh --usa      # USA target: BloodyRoar2_Recompiled_USA
 scripts/build_macos.sh --full     # universal EU+USA+JP (needs generated/ C)
 ```
 
+`scripts/package_macos_app.sh` wraps a built executable into a double-clickable
+`.app` (`dist/Bloody Roar II Recompiled (USA).app`). Two things make that more
+than cosmetics: a bare binary inherits its TCC identity from the terminal that
+launched it, so Input Monitoring (needed for HID input and for controller
+rumble) has to be granted per terminal — a bundle gets the grant once, for the
+game; and the launcher resolves its own art/fonts through `SDL_GetBasePath()`,
+which returns `Contents/Resources` for a bundle, so the packager symlinks
+`Contents/Resources/assets -> ../MacOS/assets` (the runtime anchors its sidecars
+to the executable, in `Contents/MacOS`).
+
 Each region's setup wizard points at its own config: `codegen_setup.c` for EU
 (`game.toml`) and `codegen_setup_us.c` for USA (`game_us.toml`). Before that
 split, the USA exe carried the EU-pinned wizard, so first-run setup was forced
