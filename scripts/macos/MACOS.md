@@ -106,11 +106,19 @@ launched it, so **Input Monitoring** (needed for HID input and for rumble output
 reports) must be granted to that terminal, per terminal, forever. A bundle with
 its own `CFBundleIdentifier` is granted once, for the game.
 
-Layout: the runtime anchors every sidecar (game `*.toml`, `bios/`, `mods/`,
-`assets/`, `settings.toml`, saves) to the executable's own directory, so the
-payload lives in `Contents/MacOS/` rather than `Contents/Resources/`. User state
-(`settings.toml`, `disc.cfg`, saves) is deliberately **not** copied — the bundle
-starts clean.
+Layout — two lookup roots, and both matter:
+
+- the **runtime** anchors every sidecar (game `*.toml`, `bios/`, `mods/`,
+  `assets/`, settings, saves) to the executable's own directory, so the payload
+  lives in `Contents/MacOS/`;
+- the **launcher** resolves its own art and fonts through `SDL_GetBasePath()`,
+  which is bundle-aware on macOS and returns `Contents/Resources/`.
+
+So `Contents/Resources/assets` is created as a **symlink** to `../MacOS/assets`
+— one payload, both roots. Without it the game still runs, but the launcher
+silently falls back to a monospace font and draws no controller artwork, which
+looks like a broken build. User state (`settings.toml`, `disc.cfg`, saves) is
+deliberately **not** copied — the bundle starts clean.
 
 Signing: the executable is signed ad-hoc; the *container* cannot be sealed
 because codesign refuses the mod catalog's dotted package directories

@@ -88,6 +88,15 @@ done
 # Not copied on purpose: settings.toml, disc.cfg, bios.cfg, saves/ — user state.
 # The bundle starts clean and writes its own on first run.
 
+# The launcher resolves its own art/fonts through SDL_GetBasePath(), which is
+# bundle-aware on macOS and returns Contents/Resources -- not the exe directory.
+# Without this, the launcher silently falls back to a monospace font and shows
+# no controller art, while the game itself still runs. Symlink rather than copy:
+# one payload, both lookup roots.
+if [[ -d "$APP/Contents/MacOS/assets" ]]; then
+  ln -sfn ../MacOS/assets "$APP/Contents/Resources/assets"
+fi
+
 # --- icon (optional; needs sips + iconutil from Xcode CLT) -------------------
 PNG="$BUILD_DIR/assets/psxrecomp.png"
 if [[ -f "$PNG" ]] && command -v sips >/dev/null && command -v iconutil >/dev/null; then
